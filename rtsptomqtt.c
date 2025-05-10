@@ -9,13 +9,13 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -29,12 +29,6 @@
 #define MQTT_SERVER_DEFAULT "mqtt://localhost"
 #define MQTT_CLIENT_DEFAULT "rtsptomqtt"
 #define MQTT_TOPIC_DEFAULT "snapshots"
-
-#define FFMPEG_COMMAND_EXE "ffmpeg"
-#define FFMPEG_COMMAND_OPT_BASE "-loglevel quiet"
-#define FFMPEG_COMMAND_OPT_RTSP "-rtsp_transport tcp"
-#define FFMPEG_COMMAND_OPT_IMAGE "-vframes 1 -f image2pipe -"
-#define FFMPEG_COMMAND_OPT_EXTRA_DEFAULT "-q:v 6 -pix_fmt yuvj420p -chroma_sample_location center"
 
 #ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 5 * 1024 * 1024 // 5MB
@@ -59,15 +53,13 @@
 const struct option config_options[] = {{"config", required_argument, 0, 0},      // config
                                         {"mqtt-client", required_argument, 0, 0}, // mqtt
                                         {"mqtt-server", required_argument, 0, 0},
-                                        {"rtsp-url", required_argument, 0, 0},   // rtsp
-                                        {"ffmpeg-opt", required_argument, 0, 0}, // ffmpeg
-                                        {"interval", required_argument, 0, 0},   // interval
-                                        {"debug", required_argument, 0, 0},      // debug
+                                        {"rtsp-url", required_argument, 0, 0}, // rtsp
+                                        {"interval", required_argument, 0, 0}, // interval
+                                        {"debug", required_argument, 0, 0},    // debug
                                         {0, 0, 0, 0}};
 
 MqttConfig mqtt_config;
 const char *mqtt_topic;
-const char *ffmpeg_opt;
 
 bool config(const int argc, const char *argv[]) {
     if (!config_load(CONFIG_FILE_DEFAULT, argc, argv, config_options))
@@ -82,17 +74,20 @@ bool config(const int argc, const char *argv[]) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-unsigned char buffer[MAX_BUFFER_SIZE];
+unsigned char snapshot_buffer[MAX_BUFFER_SIZE];
 int snapshot_skipped = 0;
 
-bool capture(const char *rtsp_url, const char *ffmpeg_opt) {
+bool capture(const char *rtsp_url) {
 
     const time_t time_entry = time(NULL);
 
-    char ffmpeg_command[512];
-    snprintf(ffmpeg_command, sizeof(ffmpeg_command), "%s %s -i %s %s %s %s", FFMPEG_COMMAND_EXE,
-             FFMPEG_COMMAND_OPT_BASE, rtsp_url, FFMPEG_COMMAND_OPT_RTSP, ffmpeg_opt, FFMPEG_COMMAND_OPT_IMAGE);
-    const size_t total_bytes = exec(ffmpeg_command, buffer, sizeof(buffer));
+    const char *const ffmpeg_command = "ffmpeg";
+    const char *const ffmpeg_arguments[] = {ffmpeg_command, "-y", "-loglevel",  "quiet",    "-rtsp_transport",
+                                            "tcp",          "-i", rtsp_url,     "-vframes", "1",
+                                            "-q:v",         "6",  "-pix_fmt",   "yuvj420p", "-chroma_sample_location",
+                                            "center",       "-f", "image2pipe", "-",        NULL};
+
+    size_t total_bytes = exec(ffmpeg_command, ffmpeg_arguments, snapshot_buffer, sizeof(snapshot_buffer));
     if (total_bytes == 0)
         return false;
 
@@ -104,7 +99,7 @@ bool capture(const char *rtsp_url, const char *ffmpeg_opt) {
 
     char topic[128];
     snprintf(topic, sizeof(topic), "%s/imagedata", mqtt_topic);
-    if (!mqtt_send(topic, buffer, total_bytes))
+    if (!mqtt_send(topic, snapshot_buffer, total_bytes))
         return false;
     snprintf(topic, sizeof(topic), "%s/metadata", mqtt_topic);
     if (!mqtt_send(topic, (unsigned char *)metadata, strlen(metadata)))
@@ -117,11 +112,10 @@ bool capture(const char *rtsp_url, const char *ffmpeg_opt) {
 void execute(volatile bool *running) {
     const int interval = config_get_integer("interval", INTERVAL_DEFAULT);
     const char *rtsp_url = config_get_string("rtsp-url", RTSP_URL_DEFAULT);
-    const char *ffmpeg_opt = config_get_string("ffmpeg-opt", FFMPEG_COMMAND_OPT_EXTRA_DEFAULT);
     printf("executing (interval=%d seconds)\n", interval);
     while (*running) {
         const time_t time_entry = time(NULL);
-        if (!capture(rtsp_url, ffmpeg_opt))
+        if (!capture(rtsp_url))
             fprintf(stderr, "capture error, will retry\n");
         const time_t time_leave = time(NULL);
         time_t next = time_entry + interval;
