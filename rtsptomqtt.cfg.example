@@ -1,0 +1,5 @@
+mqtt-server=mqtt://localhost
+mqtt-client=snapshots-publisher
+mqtt-topic=snapshots
+interval=30
+rtsp-url=rtsp://192.168.0.1:554/Streaming/Channels/101
