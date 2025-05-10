@@ -81,7 +81,7 @@ bool capture(const char *rtsp_url) {
 
     const time_t time_entry = time(NULL);
 
-    const char *const ffmpeg_command = "ffpmeg";
+    const char *const ffmpeg_command = "ffmpeg";
     const char *const ffmpeg_arguments[] = {ffmpeg_command, "-y", "-loglevel",  "quiet",    "-rtsp_transport",
                                             "tcp",          "-i", rtsp_url,     "-vframes", "1",
                                             "-q:v",         "6",  "-pix_fmt",   "yuvj420p", "-chroma_sample_location",
