@@ -9,18 +9,13 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <mosquitto.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <time.h>
-#include <unistd.h>
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -32,10 +27,12 @@
 #define INTERVAL_DEFAULT 30
 
 #define MQTT_SERVER_DEFAULT "mqtt://localhost"
-#define MQTT_CLIENT_DEFAULT "snapshot-publisher"
+#define MQTT_CLIENT_DEFAULT "rtsptomqtt"
 #define MQTT_TOPIC_DEFAULT "snapshots"
 
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 5 * 1024 * 1024 // 5MB
+#endif
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -47,6 +44,8 @@
 #define MQTT_PUBLISH_RETAIN false
 
 #include "include/mqtt_linux.h"
+
+#include "include/exec_linux.h"
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -81,62 +80,22 @@ int snapshot_skipped = 0;
 bool capture(const char *rtsp_url) {
 
     const time_t time_entry = time(NULL);
-    const struct tm *timeinfo = localtime(&time_entry);
 
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        return false;
-    }
-    pid_t pid = fork();
-    if (pid == -1) { // Error
-        perror("fork");
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return false;
-    }
-    if (pid == 0) { // Child process
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        const int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
-        }
-        close(pipefd[1]);
-        execlp("ffmpeg", "ffmpeg", "-y", "-loglevel", "quiet", "-rtsp_transport", "tcp", "-i", rtsp_url, "-vframes",
-               "1", "-q:v", "6", "-pix_fmt", "yuvj420p", "-chroma_sample_location", "center", "-f", "image2pipe", "-",
-               NULL);
-        perror("execlp");
-        exit(EXIT_FAILURE);
-    }
-    // Parent process
-    close(pipefd[1]);
-    size_t total_bytes = 0;
-    ssize_t bytes_read;
-    while ((bytes_read = read(pipefd[0], snapshot_buffer + total_bytes, MAX_BUFFER_SIZE - total_bytes)) > 0) {
-        total_bytes += bytes_read;
-        if (total_bytes >= MAX_BUFFER_SIZE) {
-            fprintf(stderr, "ffmpeg image too large for buffer\n");
-            total_bytes = 0;
-            break;
-        }
-    }
-    close(pipefd[0]);
-    int status;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "ffmpeg exited with status %d\n", WEXITSTATUS(status));
-        return false;
-    }
+    const char *const ffmpeg_command = "ffpmeg";
+    const char *const ffmpeg_arguments[] = {ffmpeg_command, "-y", "-loglevel",  "quiet",    "-rtsp_transport",
+                                            "tcp",          "-i", rtsp_url,     "-vframes", "1",
+                                            "-q:v",         "6",  "-pix_fmt",   "yuvj420p", "-chroma_sample_location",
+                                            "center",       "-f", "image2pipe", "-",        NULL};
+
+    size_t total_bytes = exec(ffmpeg_command, ffmpeg_arguments, snapshot_buffer, sizeof(snapshot_buffer));
     if (total_bytes == 0)
         return false;
 
     const time_t total_time = time(NULL) - time_entry;
     char timestamp[15 + 1];
-    strftime(timestamp, sizeof(timestamp) - 1, "%Y%m%d%H%M%S", timeinfo);
+    strftime(timestamp, sizeof(timestamp) - 1, "%Y%m%d%H%M%S", localtime(&time_entry));
     char metadata[256];
-    snprintf(metadata, sizeof(metadata), "{\"timestamp\":\"%s\",\"size\":%zu}", timestamp, total_bytes);
+    snprintf(metadata, sizeof(metadata), "{\"time\":\"%s\",\"size\":%zu}", timestamp, total_bytes);
 
     char topic[128];
     snprintf(topic, sizeof(topic), "%s/imagedata", mqtt_topic);

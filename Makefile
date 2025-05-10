@@ -6,7 +6,7 @@ TARGET = rtsptomqtt
 
 ##
 
-$(TARGET): $(TARGET).c include/config_linux.h include/mqtt_linux.h
+$(TARGET): $(TARGET).c include/config_linux.h include/mqtt_linux.h include/exec_linux.h
 	$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).c $(LDFLAGS)
 all: $(TARGET)
 clean:
@@ -31,5 +31,7 @@ endef
 install_systemd_service: $(TARGET).service
 	$(call install_systemd_service,$(TARGET),$(TARGET))
 install: install_systemd_service
+restart:
+	systemctl restart $(TARGET)
 .PHONY: install install_systemd_service
 
