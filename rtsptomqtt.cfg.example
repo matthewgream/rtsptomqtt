@@ -3,3 +3,4 @@ mqtt-client=rtsptomqtt
 mqtt-topic=snapshots
 interval=30
 rtsp-url=rtsp://192.168.0.1:554/Streaming/Channels/101
+ffmpeg-opt=-q:v 6 -pix_fmt yuvj420p -chroma_sample_location center
